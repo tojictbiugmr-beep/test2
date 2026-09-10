@@ -15,22 +15,6 @@ from combat import (
     is_combat_active,
 )
 
-
-def check_game_action(command_text, state, client=None):
-    """
-    Проверяет действие игрока: разбирает команду, берёт стат, кидает кубик.
-    client нужен, если позже захочешь делать проверки через ИИ.
-    """
-    stat_name = "ловкость"
-
-    stat_value = state["skills"].get(stat_name, 10)
-    difficulty = 15
-
-    success, roll, total = check_action(stat_value, difficulty)
-
-    return success, roll, total, stat_name
-
-
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -220,6 +204,7 @@ def handle_class_choice(call):
 
 # ============================================================
 #  КНОПКА КУБИКА (callback)
+#  --- Теперь обрабатывает и ручной бросок, и бросок с действием ---
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("dice:"))
 def handle_dice_button(call):
@@ -229,6 +214,50 @@ def handle_dice_button(call):
 
     roll = roll_d20()
 
+    # --- Если есть отложенное действие игрока — обрабатываем его ---
+    pending = state.pop("pending_action", None)
+
+    if pending:
+        # Игрок выбрал навык для проверки действия
+        stat_name = param if param != "roll" else "ловкость"
+        stat_value = state["skills"].get(stat_name, 10)
+        modifier = (stat_value - 10) // 2
+        total = roll + modifier
+        difficulty = 15
+
+        success = total >= difficulty
+
+        if success:
+            roll_text = (
+                f"🎲 Проверка: {stat_name}\n"
+                f"Бросок: {roll} {'+' if modifier >= 0 else '-'} {abs(modifier)} = {total}\n"
+                f"✅ Успех! (нужно было ≥{difficulty})"
+            )
+            modified_text = (
+                f"{pending} "
+                f"[Проверка {stat_name}: успех, бросок {total} vs сложность {difficulty}]"
+            )
+        else:
+            roll_text = (
+                f"🎲 Проверка: {stat_name}\n"
+                f"Бросок: {roll} {'+' if modifier >= 0 else '-'} {abs(modifier)} = {total}\n"
+                f"❌ Провал! (нужно было ≥{difficulty})"
+            )
+            modified_text = (
+                f"{pending} "
+                f"[Проверка {stat_name}: провал, бросок {total} vs сложность {difficulty}]"
+            )
+
+        bot.answer_callback_query(call.id)
+        send_long_message(chat_id, roll_text)
+
+        # Отправляем действие с результатом кубика в ИИ
+        reply = chat_with_ai(modified_text, state)
+        send_long_message(chat_id, reply)
+        save_chat(chat_id)
+        return
+
+    # --- Обычный бросок кубика без действия ---
     if param == "roll":
         text = format_roll_result(roll, 0, roll, "🎲 Обычный бросок d20")
     else:
@@ -379,7 +408,7 @@ def handle_all(message):
     state = get_state(chat_id)
     text = message.text.lower().strip()
 
-    # --- КУБИК ---
+    # --- КУБИК (просто бросок, без действия) ---
     if text in ("кубик", "d20", "dice", "/кубик"):
         send_long_message(chat_id, "Выбери бросок:", reply_markup=dice_keyboard())
         return
@@ -473,26 +502,17 @@ def handle_all(message):
         save_chat(chat_id)
         return
 
-    # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
-    success, roll, total, stat = check_game_action(message.text, state, client)
-    modifier = (state["skills"].get(stat, 10) - 10) // 2
-
-    if success:
-        roll_text = (
-            f"✅ Успех! Проверка: {stat}.\n"
-            f"🎲 Бросок: {roll} + {modifier} = {total}"
-        )
-        modified_text = f"{message.text} [Проверка {stat}: успех, бросок {total}]"
-    else:
-        roll_text = (
-            f"❌ Провал. Проверка: {stat}.\n"
-            f"🎲 Бросок: {roll} + {modifier} = {total}"
-        )
-        modified_text = f"{message.text} [Проверка {stat}: провал, бросок {total}]"
-
-    reply = chat_with_ai(modified_text, state)
-    send_long_message(chat_id, roll_text + "\n\n" + reply)
+    # --- СВОБОДНОЕ ДЕЙСТВИЕ: просим игрока кинуть кубик ---
+    # Сохраняем текст действия и показываем кнопки кубика
+    state["pending_action"] = message.text
     save_chat(chat_id)
+
+    send_long_message(
+        chat_id,
+        f"🎲 Твоё действие: \"{message.text}\"\n"
+        f"Выбери навык для проверки кубиком:",
+        reply_markup=dice_keyboard()
+    )
 
 
 print("Бот запущен и готов к приключениям!")
