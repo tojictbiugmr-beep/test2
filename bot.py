@@ -21,11 +21,6 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
-MODEL = "groq/compound-mini"
 
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
