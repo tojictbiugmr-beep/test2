@@ -14,7 +14,24 @@ from combat import (                                         # --- НОВОЕ --
     get_ai_combat_context, generate_narrative,               # --- НОВОЕ ---
     is_combat_active,                                         # --- НОВОЕ ---
 )
-
+def check_game_action(command_text, state, client=None):
+    """
+    Проверяет действие игрока: разбирает команду, берёт стат, кидает кубик.
+    client нужен, если позже захочешь делать проверки через ИИ.
+    """
+    # Тут можно распарсить command_text, чтобы понять, какой стат проверять.
+    # Для примера просто возьмём "ловкость" как дефолт.
+    stat_name = "ловкость" 
+    
+    # Получаем значение стата из состояния
+    stat_value = state["skills"].get(stat_name, 10)
+    difficulty = 15  # Можно менять в зависимости от ситуации
+    
+    # Используем настоящую dice.check_action
+    success, roll, total = check_action(stat_value, difficulty)
+    
+    return success, roll, total, stat_name
+    
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -441,7 +458,12 @@ def handle_all(message):
         return
 
     # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
-    result = check_action(message.text, state, client)
+    success, roll, total, stat = check_game_action(message.text, state, client)
+if success:
+    # ... успех
+else:
+    # ... провал
+
     if result is not None:
         roll_text = format_roll_result(result)
         modified_text = (
