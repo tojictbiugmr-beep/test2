@@ -1,7 +1,7 @@
 import telebot
 import os
 import random
-from openai import OpenAI
+from ai_client import client, MODEL
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from memory import (
     load_state, save_state, add_to_history,
