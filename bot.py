@@ -14,6 +14,10 @@ from combat import (
     get_ai_combat_context, generate_narrative,
     is_combat_active,
 )
+from actions import (
+    resolve_action, resolve_dice_roll,
+    format_action_result, format_dice_result,
+)
 
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -106,12 +110,13 @@ def generate_scene(state):
         {"role": "user", "content": f"Опиши сцену в 2-3 предложениях. Контекст героя: {status}"}
     ]
     try:
-        scene_text = client.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             max_tokens=500,
             temperature=0.7
-        ).choices[0].message.content.strip()
+        )
+        scene_text = response.choices[0].message.content.strip()
         add_to_history(state, "assistant", scene_text)
         return scene_text
     except Exception as e:
@@ -132,12 +137,13 @@ def chat_with_ai(user_text, state):
     messages.append({"role": "user", "content": user_msg})
 
     try:
-        reply = client.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             max_tokens=800,
             temperature=0.8
-        ).choices[0].message.content.strip()
+        )
+        reply = response.choices[0].message.content.strip()
         add_to_history(state, "user", user_text)
         add_to_history(state, "assistant", reply)
         state["turn_count"] += 1
@@ -204,7 +210,6 @@ def handle_class_choice(call):
 
 # ============================================================
 #  КНОПКА КУБИКА (callback)
-#  --- Теперь обрабатывает и ручной бросок, и бросок с действием ---
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("dice:"))
 def handle_dice_button(call):
@@ -212,60 +217,32 @@ def handle_dice_button(call):
     state = get_state(chat_id)
     param = call.data.split(":")[1] if len(call.data.split(":")) > 1 else "roll"
 
-    roll = roll_d20()
-
-    # --- Если есть отложенное действие игрока — обрабатываем его ---
+    # --- Отложенное действие игрока ---
     pending = state.pop("pending_action", None)
 
     if pending:
-        # Игрок выбрал навык для проверки действия
         stat_name = param if param != "roll" else "ловкость"
-        stat_value = state["skills"].get(stat_name, 10)
-        modifier = (stat_value - 10) // 2
-        total = roll + modifier
-        difficulty = 15
-
-        success = total >= difficulty
-
-        if success:
-            roll_text = (
-                f"🎲 Проверка: {stat_name}\n"
-                f"Бросок: {roll} {'+' if modifier >= 0 else '-'} {abs(modifier)} = {total}\n"
-                f"✅ Успех! (нужно было ≥{difficulty})"
-            )
-            modified_text = (
-                f"{pending} "
-                f"[Проверка {stat_name}: успех, бросок {total} vs сложность {difficulty}]"
-            )
-        else:
-            roll_text = (
-                f"🎲 Проверка: {stat_name}\n"
-                f"Бросок: {roll} {'+' if modifier >= 0 else '-'} {abs(modifier)} = {total}\n"
-                f"❌ Провал! (нужно было ≥{difficulty})"
-            )
-            modified_text = (
-                f"{pending} "
-                f"[Проверка {stat_name}: провал, бросок {total} vs сложность {difficulty}]"
-            )
-
+        result = resolve_action(pending, stat_name, state)
         bot.answer_callback_query(call.id)
-        send_long_message(chat_id, roll_text)
-
-        # Отправляем действие с результатом кубика в ИИ
+        text = format_action_result(result)
+        send_long_message(chat_id, text)
+        modified_text = (
+            f"{pending} "
+            f"[Проверка {stat_name}: {result['result_type']}, "
+            f"бросок {result['total']} vs сложность {result['difficulty']}]"
+        )
         reply = chat_with_ai(modified_text, state)
         send_long_message(chat_id, reply)
         save_chat(chat_id)
         return
 
-    # --- Обычный бросок кубика без действия ---
+    # --- Обычный бросок без действия ---
     if param == "roll":
-        text = format_roll_result(roll, 0, roll, "🎲 Обычный бросок d20")
+        result = resolve_dice_roll(None, state)
     else:
-        stat_value = state["skills"].get(param, 10)
-        modifier = (stat_value - 10) // 2
-        total = roll + modifier
-        text = format_roll_result(roll, modifier, total, f"🎲 Проверка: {param}")
+        result = resolve_dice_roll(param, state)
 
+    text = format_dice_result(result)
     bot.answer_callback_query(call.id)
     send_long_message(chat_id, text, reply_markup=dice_keyboard())
     save_chat(chat_id)
@@ -408,7 +385,7 @@ def handle_all(message):
     state = get_state(chat_id)
     text = message.text.lower().strip()
 
-    # --- КУБИК (просто бросок, без действия) ---
+    # --- КУБИК ---
     if text in ("кубик", "d20", "dice", "/кубик"):
         send_long_message(chat_id, "Выбери бросок:", reply_markup=dice_keyboard())
         return
@@ -502,8 +479,7 @@ def handle_all(message):
         save_chat(chat_id)
         return
 
-    # --- СВОБОДНОЕ ДЕЙСТВИЕ: просим игрока кинуть кубик ---
-    # Сохраняем текст действия и показываем кнопки кубика
+    # --- СВОБОДНОЕ ДЕЙСТВИЕ: сохраняем и просим кинуть кубик ---
     state["pending_action"] = message.text
     save_chat(chat_id)
 
@@ -517,4 +493,3 @@ def handle_all(message):
 
 print("Бот запущен и готов к приключениям!")
 bot.polling(none_stop=True)
-    
