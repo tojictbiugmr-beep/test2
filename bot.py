@@ -457,18 +457,23 @@ def handle_all(message):
         save_chat(chat_id)
         return
 
-    # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
-    success, roll, total, stat = check_game_action(message.text, state, client)
-if success:
+# --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
+success, roll, total, stat = check_game_action(message.text, state, client)
+
+if success:  # Добавляем условие if
     response_text = (
-        f"✅ Успех! Ты {description}!\n"
-        f"Бросок: {roll}, модификатор: {modifier}, итого: {total}"
+        f"✅ Успех! Вы успешно выполнили действие.\n"
+        f"Бросок: {roll}, итого: {total}"
     )
-else:
+else:  
     response_text = (
-        f"❌ Провал. Ты не смог {description}.\n"
-        f"Бросок: {roll}, модификатор: {modifier}, итого: {total}"
+        f"❌ Неудача. Действие не удалось.\n"
+        f"Бросок: {roll}, итого: {total}"
     )
+
+bot.send_message(chat_id, response_text)
+save_chat(chat_id)
+
 
 
     if result is not None:
