@@ -460,9 +460,16 @@ def handle_all(message):
     # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
     success, roll, total, stat = check_game_action(message.text, state, client)
 if success:
-    # ... успех
+    response_text = (
+        f"✅ Успех! Ты {description}!\n"
+        f"Бросок: {roll}, модификатор: {modifier}, итого: {total}"
+    )
 else:
-    # ... провал
+    response_text = (
+        f"❌ Провал. Ты не смог {description}.\n"
+        f"Бросок: {roll}, модификатор: {modifier}, итого: {total}"
+    )
+
 
     if result is not None:
         roll_text = format_roll_result(result)
