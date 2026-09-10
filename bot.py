@@ -8,30 +8,29 @@ from memory import (
     build_memory_context, maybe_summarize, reset_state, CLASS_STATS
 )
 from dice import check_action, format_roll_result, roll_d20
-from combat import (                                         # --- НОВОЕ ---
-    CLASSES, ENEMIES, start_combat, player_combat_round,     # --- НОВОЕ ---
-    get_combat_keyboard, get_combat_status,                  # --- НОВОЕ ---
-    get_ai_combat_context, generate_narrative,               # --- НОВОЕ ---
-    is_combat_active,                                         # --- НОВОЕ ---
+from combat import (
+    CLASSES, ENEMIES, start_combat, player_combat_round,
+    get_combat_keyboard, get_combat_status,
+    get_ai_combat_context, generate_narrative,
+    is_combat_active,
 )
+
+
 def check_game_action(command_text, state, client=None):
     """
     Проверяет действие игрока: разбирает команду, берёт стат, кидает кубик.
     client нужен, если позже захочешь делать проверки через ИИ.
     """
-    # Тут можно распарсить command_text, чтобы понять, какой стат проверять.
-    # Для примера просто возьмём "ловкость" как дефолт.
-    stat_name = "ловкость" 
-    
-    # Получаем значение стата из состояния
+    stat_name = "ловкость"
+
     stat_value = state["skills"].get(stat_name, 10)
-    difficulty = 15  # Можно менять в зависимости от ситуации
-    
-    # Используем настоящую dice.check_action
+    difficulty = 15
+
     success, roll, total = check_action(stat_value, difficulty)
-    
+
     return success, roll, total, stat_name
-    
+
+
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -42,28 +41,32 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
 
+
 def get_state(chat_id):
     if chat_id not in player_state:
         state = load_state(chat_id)
         player_state[chat_id] = state
     return player_state[chat_id]
 
+
 def save_chat(chat_id):
     state = player_state.get(chat_id)
     if state:
         save_state(chat_id, state)
 
+
 # === ОТПРАВКА ДЛИННЫХ СООБЩЕНИЙ ===
-def send_long_message(chat_id, text, reply_markup=None):      # --- ИЗМЕНЕНО: добавлен reply_markup ---
+def send_long_message(chat_id, text, reply_markup=None):
     limit = 4000
     if len(text) <= limit:
         bot.send_message(chat_id, text, reply_markup=reply_markup)
         return
     for i in range(0, len(text), limit):
-        chunk = text[i:i+limit]
+        chunk = text[i:i + limit]
         bot.send_message(chat_id, chunk, reply_markup=reply_markup if i == 0 else None)
 
-# === КЛАВИАТУРЫ ===                                          # --- НОВОЕ ---
+
+# === КЛАВИАТУРЫ ===
 def class_keyboard():
     markup = InlineKeyboardMarkup()
     for key, cls in CLASSES.items():
@@ -73,7 +76,8 @@ def class_keyboard():
         ))
     return markup
 
-def dice_keyboard():                                          # --- НОВОЕ ---
+
+def dice_keyboard():
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🎲 Кинуть d20", callback_data="dice:roll"))
     markup.row(
@@ -87,12 +91,14 @@ def dice_keyboard():                                          # --- НОВОЕ -
     )
     return markup
 
+
 # === ХЕЛПЕР СТАТУСА ===
 def build_status(state):
     return (
         f"HP: {state['hp']}/{state['max_hp']}, факел: {'есть' if state['has_torch'] else 'нет'}, "
         f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
     )
+
 
 # === ПРОМПТ МАСТЕРА ===
 SYSTEM_PROMPT = (
@@ -105,6 +111,7 @@ SYSTEM_PROMPT = (
     "успех — действие удалось, неудача — действие провалилось с последствиями."
 )
 
+
 # === ГЕНЕРАЦИЯ СЦЕНЫ ===
 def generate_scene(state):
     memory = build_memory_context(state)
@@ -115,17 +122,17 @@ def generate_scene(state):
         {"role": "user", "content": f"Опиши сцену в 2-3 предложениях. Контекст героя: {status}"}
     ]
     try:
-        response = client.chat.completions.create(
+        scene_text = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             max_tokens=500,
             temperature=0.7
-        )
-        scene_text = response.choices[0].message.content.strip()
+        ).choices[0].message.content.strip()
         add_to_history(state, "assistant", scene_text)
         return scene_text
     except Exception as e:
         return f"Тьма сгущается... (ошибка: {e})"
+
 
 # === СВОБОДНЫЙ РАЗГОВОР С ИИ ===
 def chat_with_ai(user_text, state):
@@ -141,13 +148,12 @@ def chat_with_ai(user_text, state):
     messages.append({"role": "user", "content": user_msg})
 
     try:
-        response = client.chat.completions.create(
+        reply = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             max_tokens=800,
             temperature=0.8
-        )
-        reply = response.choices[0].message.content.strip()
+        ).choices[0].message.content.strip()
         add_to_history(state, "user", user_text)
         add_to_history(state, "assistant", reply)
         state["turn_count"] += 1
@@ -155,6 +161,7 @@ def chat_with_ai(user_text, state):
         return reply
     except Exception as e:
         return f"Голос подземелья молчит... (ошибка: {e})"
+
 
 # ============================================================
 #  ОБРАБОТЧИКИ: /start
@@ -172,8 +179,9 @@ def send_welcome(message):
     send_long_message(chat_id, text, reply_markup=class_keyboard())
     save_chat(chat_id)
 
+
 # ============================================================
-#  ВЫБОР КЛАССА (callback)                                    # --- НОВОЕ ---
+#  ВЫБОР КЛАССА (callback)
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cls:"))
 def handle_class_choice(call):
@@ -209,8 +217,9 @@ def handle_class_choice(call):
 
     save_chat(chat_id)
 
+
 # ============================================================
-#  КНОПКА КУБИКА (callback)                                   # --- НОВОЕ ---
+#  КНОПКА КУБИКА (callback)
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("dice:"))
 def handle_dice_button(call):
@@ -218,18 +227,23 @@ def handle_dice_button(call):
     state = get_state(chat_id)
     param = call.data.split(":")[1] if len(call.data.split(":")) > 1 else "roll"
 
-    if param == "roll":
-        result = roll_d20(state, "обычный")
-    else:
-        result = roll_d20(state, param)
+    roll = roll_d20()
 
-    text = format_roll_result(result)
+    if param == "roll":
+        text = format_roll_result(roll, 0, roll, "🎲 Обычный бросок d20")
+    else:
+        stat_value = state["skills"].get(param, 10)
+        modifier = (stat_value - 10) // 2
+        total = roll + modifier
+        text = format_roll_result(roll, modifier, total, f"🎲 Проверка: {param}")
+
     bot.answer_callback_query(call.id)
     send_long_message(chat_id, text, reply_markup=dice_keyboard())
     save_chat(chat_id)
 
+
 # ============================================================
-#  КНОПКА АТАКИ (callback)                                    # --- НОВОЕ ---
+#  КНОПКА АТАКИ (callback)
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("atk:"))
 def handle_attack_button(call):
@@ -240,7 +254,6 @@ def handle_attack_button(call):
     result = player_combat_round(state, "attack", atk_key)
     save_chat(chat_id)
 
-    # ИИ-нарратив в одном предложении
     if not result["combat_ended"]:
         narrative = generate_narrative(state, client, MODEL)
         result["text"] += f"\n\n✨ {narrative}"
@@ -256,8 +269,9 @@ def handle_attack_button(call):
         kb = get_combat_keyboard(state)
         bot.edit_message_text(result["text"], chat_id, call.message.message_id, reply_markup=kb)
 
+
 # ============================================================
-#  КНОПКА БОЕВЫХ ДЕЙСТВИЙ (callback)                           # --- НОВОЕ ---
+#  КНОПКА БОЕВЫХ ДЕЙСТВИЙ (callback)
 # ============================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cmb:"))
 def handle_combat_action(call):
@@ -294,6 +308,7 @@ def handle_combat_action(call):
     else:
         kb = get_combat_keyboard(state)
         bot.edit_message_text(result["text"], chat_id, call.message.message_id, reply_markup=kb)
+
 
 # ============================================================
 #  /прокачка
@@ -353,6 +368,7 @@ def upgrade_skill(message):
         send_long_message(chat_id, reply)
 
     save_chat(chat_id)
+
 
 # ============================================================
 #  ТЕКСТОВЫЕ КОМАНДЫ И СВОБОДНЫЙ ВВОД
@@ -457,38 +473,28 @@ def handle_all(message):
         save_chat(chat_id)
         return
 
-# --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
-success, roll, total, stat = check_game_action(message.text, state, client)
+    # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
+    success, roll, total, stat = check_game_action(message.text, state, client)
+    modifier = (state["skills"].get(stat, 10) - 10) // 2
 
-if success:  # Добавляем условие if
-    response_text = (
-        f"✅ Успех! Вы успешно выполнили действие.\n"
-        f"Бросок: {roll}, итого: {total}"
-    )
-else:  
-    response_text = (
-        f"❌ Неудача. Действие не удалось.\n"
-        f"Бросок: {roll}, итого: {total}"
-    )
-
-bot.send_message(chat_id, response_text)
-save_chat(chat_id)
-
-
-
-    if result is not None:
-        roll_text = format_roll_result(result)
-        modified_text = (
-            f"{message.text} "
-            f"[Бросок: {result['total']} vs сложность {result['difficulty']} — "
-            f"{result['result_type']}. {result['reason']}]"
+    if success:
+        roll_text = (
+            f"✅ Успех! Проверка: {stat}.\n"
+            f"🎲 Бросок: {roll} + {modifier} = {total}"
         )
-        reply = chat_with_ai(modified_text, state)
-        send_long_message(chat_id, roll_text + "\n\n" + reply)
+        modified_text = f"{message.text} [Проверка {stat}: успех, бросок {total}]"
     else:
-        reply = chat_with_ai(message.text, state)
-        send_long_message(chat_id, reply)
+        roll_text = (
+            f"❌ Провал. Проверка: {stat}.\n"
+            f"🎲 Бросок: {roll} + {modifier} = {total}"
+        )
+        modified_text = f"{message.text} [Проверка {stat}: провал, бросок {total}]"
+
+    reply = chat_with_ai(modified_text, state)
+    send_long_message(chat_id, roll_text + "\n\n" + reply)
     save_chat(chat_id)
+
 
 print("Бот запущен и готов к приключениям!")
 bot.polling(none_stop=True)
+    
